@@ -1,0 +1,108 @@
+# HIMYB : "How I Met Your Bias: Investigating Bias Amplification in Diffusion Models"
+
+This repository contains the code that has been used for the experiments in the WACV 2026 paper "How I Met Your Bias: Investigating Bias Amplification in Diffusion Models"
+by Nathan Roos, Ani Gjergji, Ekaterina Iakovleva, Vito Paolo Pastore and Enzo Tartaglione.
+
+The goal of this repository is to train diffusion models on dataset with controlled bias and to evaluate the bias amplification of the trained models.
+
+As model, we use the implementation of the UNet DDPM++ (referred to as `ddpmpp`
+in the code) (see ['Elucidating the Design Space of Diffusion-Based Generative Models' Karras et.al. 2022](https://arxiv.org/abs/2206.00364))
+from the codebase https://github.com/NVlabs/edm.
+
+The three datasets implemented are:
+
+- **Biased MNIST**: the bias is the color of the background, the target is the digit
+- **Waterbirds**: the bias is the type of background (water or land), the target is the type of bird (waterbird or landbird)
+- **BFFHQ**: the bias is the gender of the person, while the target is the age of the person
+
+The parameter $\rho$ (or `rho` in the code) is used to control the bias in the dataset. It represents the 
+proportion of samples that are bias-aligned (ie. waterbird on water background, digit 0 on red background, etc.).
+
+## Model
+
+If you want an example of usage in the code (as only some aspects will be covered in this README): `biits/` contains example training scripts (eg `train_bffhq.py`) that show how to call the default configurations and how to launch the training.
+
+### Model implementation usage
+
+The model in itself is implemented in `biits/models/ddpmpp.py`.
+
+We follow the framework of ['Elucidating the Design Space of Diffusion-Based Generative Models' Karras et.al. 2022](https://arxiv.org/abs/2206.00364)
+and thus the model is wrapped by `EDMPrecond` to precondition the input and change the output.
+
+The usage looks like this (see `training_loop.py` for an example):
+
+```python
+import himyb.models.ddpmpp as ddpmpp
+import himyb.models.preconditioning as preconditioning
+
+model_config = ...
+internal_model = ddpmpp.DDPMPP(**model_config)
+model = preconditioning.EDMPrecond(
+    model=internal_model,
+    sigma_data=0.5,  # value from the paper Karras2022
+)
+```
+
+Then you should *always* manipulate the instance of the `EDMPrecond` class, not the internal model.
+
+### Configurations: model, training, dataset
+
+In biits/configs/ you can find functions that create ConfigDict (from the package ml_configurations) for the model, optimizer and dataset for all datasets.
+
+### Savind and loading training states.
+
+The file `save_load.py` contains functions to save and load the training state, including the model, optimizer, and scheduler, as well as dataset_config, model_config, and training_config. They are designed to work together out of the box.
+
+## Training
+
+As mentionned above, there are example training scripts in `biits/` that show how to use the model and the configurations.
+
+### Wandb
+
+We can use wandb to log the metrics during training, namely:
+
+* train/loss: the loss of the model on the training set
+* train/ema_loss: the loss of the EMA model (parameters averaged over time) on the training set
+* train/grad_norm: the norm of the gradients of the model parameters
+* n_img: the number of images seen by the model during training
+
+To vizualize properly the metrics in wandb, we *heavily* recommend setting as x-axis the `n_img` metric.
+
+You need to add a file `wandb_info.yaml` in the root of the repository with the following content:
+
+```yaml
+---
+WANDB_API_KEY: "this_is_where_your_api_key_goes"
+PROJECT_NAME: "your_project_name_here"
+...
+```
+
+### Training loop
+
+The training loop is inspired from the one in the EDM codebase, but adapted to our needs.
+
+One important aspect is that it allows the save of checkpoints at regular intervals, but also regularly save a snapshot of the model. The snapshot overwrites the previous one, but the checkpoints are all saved and kept.
+
+## Sampling
+
+The sampler implemented (in `biits/sampler/sampler.py`) is the stochastic sampler from Karras et al. 2022.
+The hyperparameters that you should tweak are:
+
+* num_steps : the number of steps in the sampling process
+* s_churn : controls the variance of the noise added to the samples
+* s_tmin : minimum time at which fresh noise is added at each step
+* s_tmax : maximum time at which fresh noise is added at each step
+* guidance_scale : the scale of the CFG strength
+* use_heun : whether to use the Heun method or the Euler method. Default is Heun, as in the paper.
+
+An example of usage of the sampler to store the images (such as in the case of BFFHQ where we want to store the images
+to be able to process them later) is given in `biits/example_sampling_bffhq.py`.
+
+## Estimating and visualizing $\rho_\text{model}$
+
+We recall that $\rho_\text{model}$ is the proportion of samples that are bias-aligned in the samples generated by the model.
+
+We perform this estimation in two steps.
+
+1. First we generate a large number of samples from the different classes, and we count the count of samples of each class-bias pair. We store the results in a matrix in a csv file (*more details* in `biits/example_script_computing_rho.py`). Importantly, the images are not saved.
+2. Given the matrix, we compute the estimation of $\rho_\text{model}$ and its confidence interval, which allow for visualization. *More details* and an example can be found in the notebook `tests/example_rho_model_visualization.ipynb`.

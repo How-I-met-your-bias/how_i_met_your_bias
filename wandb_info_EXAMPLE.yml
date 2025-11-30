@@ -1,0 +1,4 @@
+---
+WANDB_API_KEY: "this_is_where_your_api_key_goes"
+PROJECT_NAME: "your_project_name_here"
+...
